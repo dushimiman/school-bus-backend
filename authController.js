@@ -16,18 +16,29 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// MongoDB Device schema
-const deviceSchema = new mongoose.Schema({
-  serialNumber: { type: String, required: true },
-  simNumber: { type: String, required: true },
-  deviceModel: { type: String, required: true },
+// School schema
+const schoolSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  address: { type: String, required: true },
+  contactEmail: { type: String, required: true, unique: true },
+  contactPhone: { type: String, required: true },
   creationDate: { type: Date, default: Date.now },
-  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
 });
 
-const Device = mongoose.model('Device', deviceSchema);
+const School = mongoose.model('School', schoolSchema);
 
-// Connect to MongoDB Atlas
+// Bus schema
+const busSchema = new mongoose.Schema({
+  plateNumber: { type: String, required: true, unique: true },
+  gpsModel: { type: String, required: true },
+  ownerName: { type: String, required: true },
+  school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true }, // Associate bus with a school
+  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  creationDate: { type: Date, default: Date.now },
+});
+
+const Bus = mongoose.model('Bus', busSchema);
+
 mongoose.connect('mongodb+srv://dushimediane12:Rnm1fjcVeD15HIp9@cluster0.2ivfkiz.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -35,23 +46,19 @@ mongoose.connect('mongodb+srv://dushimediane12:Rnm1fjcVeD15HIp9@cluster0.2ivfkiz
 .then(() => console.log('Connected to MongoDB Atlas'))
 .catch((error) => console.error('Error connecting to MongoDB Atlas:', error));
 
-// Middleware to authenticate token
 const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    console.log('Authorization Header:', authHeader); // Debugging line
-    const token = authHeader && authHeader.split(' ')[1];
-    console.log('Token:', token); // Debugging line
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
 
-    if (token == null) return res.sendStatus(401); // No token found
+  if (token == null) return res.sendStatus(401);
 
-    jwt.verify(token, 'your_jwt_secret_key', (err, user) => {
-        if (err) return res.sendStatus(403); // Invalid token
-        req.userId = user.userId;
-        next(); // Proceed to the next middleware or route handler
-    });
+  jwt.verify(token, 'your_jwt_secret_key', (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.userId = user.userId;
+    next();
+  });
 };
 
-// Registration Route
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
 
@@ -69,12 +76,11 @@ app.post('/api/register', async (req, res) => {
     await newUser.save();
     res.status(201).json({ message: 'User registered successfully' });
   } catch (error) {
-    console.error('Error registering user:', error.message); // Detailed error message
+    console.error('Error registering user:', error.message);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Login Route
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -88,64 +94,82 @@ app.post('/api/login', async (req, res) => {
     const token = jwt.sign({ userId: user._id }, 'your_jwt_secret_key');
     res.json({ token });
   } catch (error) {
-    console.error('Error logging in:', error.message); // Detailed error message
+    console.error('Error logging in:', error.message);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Protected Route: Add New Device
-app.post('/api/devices', authenticateToken, async (req, res) => {
-  const { serialNumber, simNumber, deviceModel } = req.body;
+app.post('/api/registerSchool', authenticateToken, async (req, res) => {
+  const { name, address, contactEmail, contactPhone } = req.body;
 
-  if (!serialNumber || !simNumber || !deviceModel) {
-    return res.status(400).json({ message: 'Missing required fields' });
+  if (!name || !address || !contactEmail || !contactPhone) {
+    return res.status(400).json({ message: 'All fields are required' });
   }
 
   try {
-    const newDevice = new Device({
-      serialNumber,
-      simNumber,
-      deviceModel,
-      addedBy: req.userId,
+    const existingSchool = await School.findOne({ contactEmail });
+    if (existingSchool) {
+      return res.status(400).json({ message: 'School with this contact email already exists' });
+    }
+
+    const newSchool = new School({
+      name,
+      address,
+      contactEmail,
+      contactPhone,
     });
 
-    await newDevice.save();
-    res.status(201).json({ message: 'Device added successfully' });
+    await newSchool.save();
+    res.status(201).json({ message: 'School registered successfully' });
   } catch (error) {
-    console.error('Error adding device:', error.message); // Detailed error message
+    console.error('Error registering school:', error.message);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Route to get all devices
-app.get('/api/devices', authenticateToken, async (req, res) => {
-    try {
-        // Fetch all devices from the database
-        const devices = await Device.find().populate('addedBy', 'email'); // Populate addedBy with user email
-        res.json(devices);
-    } catch (error) {
-        console.error('Error fetching devices:', error.message); // Detailed error message
-        res.status(500).json({ message: 'Failed to fetch devices' });
-    }
-});
-app.post('/api/gps-data', (req, res) => {
-  const { deviceId, latitude, longitude, speed, timestamp } = req.body;
 
-  Device.findById(deviceId).then(device => {
-      if (device) {
-          device.location = { latitude, longitude };
-          device.speed = speed;
-          device.timestamp = timestamp;
-          return device.save();
-      } else {
-          res.status(404).send({ message: 'Device not found' });
-      }
-  }).then(savedDevice => {
-      res.send(savedDevice);
-  }).catch(error => {
-      console.error(error);
-      res.status(500).send({ message: 'Error saving GPS data' });
-  });
+// Endpoint to add a bus and associate it with a school
+app.post('/api/addBus', authenticateToken, async (req, res) => {
+  const { plateNumber, gpsModel, ownerName, schoolId } = req.body;
+
+  if (!plateNumber || !gpsModel || !ownerName || !schoolId) {
+    return res.status(400).json({ message: 'All fields are required' });
+  }
+
+  try {
+    const school = await School.findById(schoolId);
+    if (!school) {
+      return res.status(400).json({ message: 'School not found' });
+    }
+
+    const existingBus = await Bus.findOne({ plateNumber });
+    if (existingBus) {
+      return res.status(400).json({ message: 'Bus with this plate number already exists' });
+    }
+
+    const newBus = new Bus({
+      plateNumber,
+      gpsModel,
+      ownerName,
+      school: schoolId,
+      addedBy: req.userId,
+    });
+
+    await newBus.save();
+    res.status(201).json({ message: 'Bus details added successfully' });
+  } catch (error) {
+    console.error('Error adding bus:', error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+app.get('/api/schools', authenticateToken, async (req, res) => {
+  try {
+    const schools = await School.find(); 
+    res.json(schools);
+  } catch (error) {
+    console.error('Error fetching schools:', error.message);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 app.listen(5000, () => {
